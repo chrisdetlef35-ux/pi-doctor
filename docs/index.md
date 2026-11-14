@@ -1,0 +1,63 @@
+# pi-doctor
+
+Human-first Raspberry Pi diagnostics.
+
+`pi-doctor` is a read-only CLI for checking common Raspberry Pi problems such as:
+
+- identity mismatches
+- thermal throttling
+- `config.txt` drift
+- GPIO conflicts
+- camera detection problems
+- Python environment pitfalls
+
+## Quick Start
+
+Run the main diagnostics:
+
+```bash
+pi-doctor check
+```
+
+Emit machine-readable output:
+
+```bash
+pi-doctor --json check
+```
+
+Bound external probe commands:
+
+```bash
+pi-doctor --timeout 5 check
+```
+
+Run focused help:
+
+```bash
+pi-doctor explain throttling
+pi-doctor doctor gpio
+pi-doctor support-bundle --dry-run
+pi-doctor support-bundle --output ./bundles
+```
+
+## Documentation Map
+
+- [Getting Started](getting-started.md): installation, core commands, and local docs usage
+- [CLI Contract](cli-contract.md): stable automation-facing behavior
+- [Exit Codes](exit-codes.md): process exit semantics
+- [JSON Schema](json-schema.md): stable JSON structures and guarantees
+- [Hardware Matrix](hardware-matrix.md): fixture strategy for parser coverage
+- [Release Process](release-process.md): semver, release candidates, and staged validation
+- [Known Limitations](known-limitations.md): unsupported boards, blind spots, and expected false positives
+- [Maintainer Policy](maintainer-policy.md): review, privacy, security, and release responsibilities
+
+## Automation Guidance
+
+If you are integrating with `pi-doctor` from scripts or CI:
+
+- prefer `pi-doctor check --json`
+- gate behavior on `schema_version`
+- inspect `probe_health` before treating missing data as healthy
+- validate reports against the schemas in `schema/`
+- use exit codes only for coarse status
+- ignore unknown JSON fields

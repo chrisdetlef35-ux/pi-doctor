@@ -1,0 +1,31 @@
+---
+source: crates/pi-doctor-cli/tests/milestone3_config.rs
+expression: output
+---
+pi-doctor explain config
+Boot configuration analysis
+  source path: /boot/firmware/config.txt
+  layout: modern /boot/firmware layout
+  diagnostics: 4
+  legacy /boot/config.txt also exists
+
+Findings
+  Potential conflicting `i2c_arm` dtparam entries detected.
+  `dtparam=i2c_arm=...` has multiple observed values in the [all] config section. pi-doctor has not resolved include files or board-conditional precedence for the final effective setting.
+  Evidence: lines: 5, 6
+  Evidence: values: off, on
+  `start_x` looks like a legacy boot option.
+  `start_x` is commonly associated with older Raspberry Pi boot or camera guidance and may not be needed on current Raspberry Pi OS releases.
+  Evidence: line 7: start_x=1
+  Malformed config.txt line detected.
+  A config.txt line could not be parsed as a section, comment, or key=value setting.
+  Evidence: line 8: not valid
+  Legacy /boot/config.txt is present alongside the modern config path.
+  This system appears to use /boot/firmware/config.txt, but /boot/config.txt also exists and may be the wrong file to edit.
+  Evidence: active config path: /boot/firmware/config.txt
+  Evidence: legacy config path detected: /boot/config.txt
+
+Parsed keys
+  dtoverlay: lines 3, 4
+  dtparam: lines 5, 6
+  start_x: lines 7

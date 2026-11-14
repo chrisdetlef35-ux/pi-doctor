@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cargo
+
+override_dh_auto_build:
+	mkdir -p debian/cargo_home
+	printf '%s\n' \
+		'[source.crates-io]' \
+		'replace-with = "debian-registry"' \
+		'[source.debian-registry]' \
+		'directory = "$(CURDIR)/debian/cargo_registry"' \
+		> debian/cargo_home/config.toml
+	CARGO_HOME="$(CURDIR)/debian/cargo_home" cargo build --offline --package pi-doctor
+
+execute_after_dh_clean:
+	rm -rf debian/cargo_home
+
+override_dh_auto_install:
+	set -eu; \
+	binary="$$(find target -type f -name pi-doctor -path '*/debug/pi-doctor' -perm /111 | head -n 1)"; \
+	test -n "$$binary"; \
+	install -D -m 0755 "$$binary" debian/pi-doctor/usr/bin/pi-doctor
+
+execute_after_dh_auto_install:
+	/usr/share/cargo/bin/dh-cargo-built-using pi-doctor || true

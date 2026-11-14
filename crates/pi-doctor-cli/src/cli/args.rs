@@ -1,0 +1,205 @@
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
+use clap_complete::Shell;
+use std::path::PathBuf;
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "pi-doctor",
+    version,
+    about = "Human-first Raspberry Pi diagnostics",
+    long_about = None,
+    arg_required_else_help = true
+)]
+pub struct Cli {
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    #[arg(long, global = true, conflicts_with_all = ["verbose", "json"])]
+    pub quiet: bool,
+
+    #[arg(long, global = true, conflicts_with_all = ["quiet", "json"])]
+    pub verbose: bool,
+
+    #[arg(long, global = true, conflicts_with = "json")]
+    pub no_color: bool,
+
+    #[arg(long, global = true, value_name = "SECONDS", default_value_t = 3)]
+    pub timeout: u64,
+
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    #[command(about = "Run the full diagnostic probe set")]
+    Check {},
+    #[command(about = "Explain a Raspberry Pi diagnostic topic")]
+    Explain {
+        #[arg(value_enum)]
+        topic: ExplainTopic,
+    },
+    #[command(about = "Create a support bundle with reports and raw captures")]
+    SupportBundle {
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        output: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        include_sensitive: bool,
+        #[arg(long, requires = "include_sensitive")]
+        acknowledge_sensitive_data: bool,
+    },
+    #[command(about = "Run a focused diagnostic doctor")]
+    Doctor {
+        #[arg(value_enum)]
+        target: DoctorTarget,
+    },
+    #[command(about = "Generate shell completions")]
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ExplainTopic {
+    Throttling,
+    Config,
+    Python,
+}
+
+impl ExplainTopic {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Throttling => "throttling",
+            Self::Config => "config",
+            Self::Python => "python",
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum DoctorTarget {
+    Camera,
+    Gpio,
+}
+
+impl DoctorTarget {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Camera => "camera",
+            Self::Gpio => "gpio",
+        }
+    }
+}
+
+impl Cli {
+    pub fn validate(self) -> clap::error::Result<Self> {
+        if self.json
+            && !matches!(
+                self.command,
+                Commands::Check {} | Commands::Doctor { .. } | Commands::SupportBundle { .. }
+            )
+        {
+            return Err(Self::command().error(
+                ErrorKind::ArgumentConflict,
+                "`--json` is supported with `pi-doctor check`, `pi-doctor doctor`, and `pi-doctor support-bundle`",
+            ));
+        }
+
+        if let Commands::SupportBundle {
+            include_sensitive,
+            acknowledge_sensitive_data,
+            ..
+        } = &self.command
+            && *include_sensitive
+            && !*acknowledge_sensitive_data
+        {
+            return Err(Self::command().error(
+                ErrorKind::ArgumentConflict,
+                "`--include-sensitive` requires `--acknowledge-sensitive-data`",
+            ));
+        }
+
+        Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn rejects_json_for_non_check_commands() {
+        let error = Cli::try_parse_from(["pi-doctor", "--json", "explain", "python"])
+            .and_then(Cli::validate)
+            .expect_err("json should be rejected for explain commands");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert!(
+            error
+                .to_string()
+                .contains("is supported with `pi-doctor check`")
+        );
+    }
+
+    #[test]
+    fn accepts_json_for_focused_doctor_commands() {
+        let cli = Cli::try_parse_from(["pi-doctor", "--json", "doctor", "camera"])
+            .and_then(Cli::validate)
+            .expect("doctor json should be accepted");
+
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn rejects_quiet_with_json() {
+        let error = Cli::try_parse_from(["pi-doctor", "--json", "--quiet", "check"])
+            .expect_err("quiet should conflict with json");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn rejects_no_color_with_json() {
+        let error = Cli::try_parse_from(["pi-doctor", "--json", "--no-color", "check"])
+            .expect_err("no-color should conflict with json");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn parses_global_timeout() {
+        let cli = Cli::try_parse_from(["pi-doctor", "--timeout", "9", "check"])
+            .and_then(Cli::validate)
+            .expect("timeout should parse");
+
+        assert_eq!(cli.timeout, 9);
+    }
+
+    #[test]
+    fn sensitive_bundle_requires_explicit_acknowledgement() {
+        let error = Cli::try_parse_from(["pi-doctor", "support-bundle", "--include-sensitive"])
+            .and_then(Cli::validate)
+            .expect_err("sensitive bundle should require acknowledgement");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn support_bundle_accepts_output_path_and_dry_run() {
+        let cli = Cli::try_parse_from([
+            "pi-doctor",
+            "support-bundle",
+            "--output",
+            "bundles",
+            "--dry-run",
+        ])
+        .and_then(Cli::validate)
+        .expect("support bundle options should parse");
+
+        assert!(matches!(cli.command, super::Commands::SupportBundle { .. }));
+    }
+}

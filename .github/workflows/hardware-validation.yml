@@ -1,0 +1,159 @@
+name: Hardware Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version to test, for example 1.0.0. Leave empty to build from source."
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      release_version:
+        description: "Release version to test, for example 1.0.0. Leave empty to build from source."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PI_DOCTOR_BUILD_REVISION: ${{ github.sha }}
+
+jobs:
+  native-arm:
+    name: ${{ matrix.board }} ${{ matrix.os }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: pi3
+            os: bookworm-lite
+            arch: armv7
+            target: armv7-unknown-linux-gnueabihf
+            expected_board: "Raspberry Pi 3"
+            expected_arch_prefix: armv7
+            camera_expectation: no_camera_or_unavailable
+            thermal_expectation: any
+            runs_on: [self-hosted, linux, armv7, raspberry-pi-3, bookworm, no-camera]
+          - board: pi4
+            os: bookworm-desktop
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            expected_board: "Raspberry Pi 4"
+            expected_arch_prefix: aarch64
+            camera_expectation: no_camera_or_unavailable
+            thermal_expectation: any
+            runs_on: [self-hosted, linux, arm64, raspberry-pi-4, bookworm, no-camera]
+          - board: pi5
+            os: trixie-lite
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            expected_board: "Raspberry Pi 5"
+            expected_arch_prefix: aarch64
+            camera_expectation: present
+            thermal_expectation: any
+            runs_on: [self-hosted, linux, arm64, raspberry-pi-5, trixie, camera]
+          - board: zero2w
+            os: bookworm-lite
+            arch: armv7
+            target: armv7-unknown-linux-gnueabihf
+            expected_board: "Raspberry Pi Zero 2"
+            expected_arch_prefix: armv7
+            camera_expectation: no_camera_or_unavailable
+            thermal_expectation: any
+            runs_on: [self-hosted, linux, armv7, raspberry-pi-zero-2-w, bookworm, no-camera]
+          - board: compute-module
+            os: bookworm-lite
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            expected_board: "Compute Module"
+            expected_arch_prefix: aarch64
+            camera_expectation: no_camera_or_unavailable
+            thermal_expectation: any
+            runs_on: [self-hosted, linux, arm64, raspberry-pi-compute-module, bookworm, no-camera]
+          - board: pi5-thermal
+            os: bookworm-lite
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            expected_board: "Raspberry Pi 5"
+            expected_arch_prefix: aarch64
+            camera_expectation: any
+            thermal_expectation: hot
+            runs_on: [self-hosted, linux, arm64, raspberry-pi-5, bookworm, thermal-fixture]
+    runs-on: ${{ matrix.runs_on }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install pinned Rust
+        if: inputs.release_version == ''
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.88.0
+
+      - name: Build native release binary
+        if: inputs.release_version == ''
+        run: cargo build -p pi-doctor --release --locked
+
+      - name: Download and install exact release archive
+        if: inputs.release_version != ''
+        run: |
+          version="${{ inputs.release_version }}"
+          target="${{ matrix.target }}"
+          archive="pi-doctor-v${version}-${target}.tar.gz"
+          url="https://github.com/${{ github.repository }}/releases/download/v${version}/${archive}"
+          mkdir -p .tmp/bin .tmp/release
+          curl -fsSL "$url" -o ".tmp/release/${archive}"
+          curl -fsSL "${url}.sha256" -o ".tmp/release/${archive}.sha256"
+          chmod +x scripts/install.sh
+          scripts/install.sh \
+            --archive ".tmp/release/${archive}" \
+            --checksum ".tmp/release/${archive}.sha256" \
+            --target "$target" \
+            --bin-dir "$PWD/.tmp/bin"
+
+      - name: Run source-built native release check
+        if: inputs.release_version == ''
+        run: |
+          set +e
+          ./target/release/pi-doctor --json check > check.json
+          status=$?
+          set -e
+          case "$status" in
+            0|1|2|3) ;;
+            *) echo "unexpected check status: $status" >&2; exit 1 ;;
+          esac
+
+      - name: Run exact archive native release check
+        if: inputs.release_version != ''
+        run: |
+          set +e
+          "$PWD/.tmp/bin/pi-doctor" --json check > check.json
+          status=$?
+          set -e
+          case "$status" in
+            0|1|2|3) ;;
+            *) echo "unexpected check status: $status" >&2; exit 1 ;;
+          esac
+
+      - name: Validate native report schema
+        run: |
+          python3 -m pip install jsonschema==4.23.0
+          python3 scripts/validate-report-schema.py \
+            --schema schema/pi-doctor-report.v1.schema.json \
+            --registry schema/finding-registry.v1.json \
+            check.json
+
+      - name: Validate native diagnostic expectations
+        run: |
+          python3 scripts/validate-native-report.py \
+            --report check.json \
+            --expected-board-contains "${{ matrix.expected_board }}" \
+            --expected-arch-prefix "${{ matrix.expected_arch_prefix }}" \
+            --expect-supported-os \
+            --camera-expectation "${{ matrix.camera_expectation }}" \
+            --thermal-expectation "${{ matrix.thermal_expectation }}"
